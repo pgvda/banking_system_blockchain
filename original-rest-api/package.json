@@ -1,0 +1,26 @@
+{
+  "name": "original-rest-api",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "body-parser": "^2.2.0",
+    "cors": "^2.8.5",
+    "crypto-js": "^4.2.0",
+    "dotenv": "^17.2.2",
+    "express": "^5.1.0",
+    "fabric-ca-client": "^2.2.20",
+    "fabric-network": "^2.2.20",
+    "fs-extra": "^11.3.2",
+    "jsonwebtoken": "^9.0.2",
+    "jsrsasign": "^11.1.0",
+    "nodemon": "^3.1.10"
+  }
+}
