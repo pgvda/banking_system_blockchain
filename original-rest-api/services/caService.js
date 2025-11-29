@@ -6,6 +6,7 @@ const jwt = require("jsonwebtoken");
 const encryptWallet = require('../utils/encryptWallet');
 const { type } = require('os');
 const { X509 } = require('jsrsasign');
+const { verifySignature } = require('../utils/verifySignature');
 const SECRET = "supersecret"; // want to add env file later
 
 async function getWallet(orgShortName) {
@@ -103,8 +104,9 @@ async function loginUser(org, userId, aesKey) {
             mspId: identity.mspId,
             type: identity.type
         });
-
+        console.log('wallet',decryptedCert)
         const validity = await confirmValidity(tempWallet, org, userId, 'AuthenticateUser');
+        console.log('validation', validity)
         const roleMatch = validity.message.match(/role=(\w+)/);
         const role = roleMatch ? roleMatch[1] : 'unknown';
         console.log('role:', role);
@@ -137,6 +139,7 @@ async function getWalletService(org, userId) {
         }
 
         const encryptedPayloadB64 = Buffer.from(identity.credentials.privateKey).toString("base64");
+        const plainText = identity.credentials.privateKey
         return { encryptedPayloadB64 };
     } catch (error) {
         console.error(error);
@@ -144,45 +147,65 @@ async function getWalletService(org, userId) {
     }
 }
 
-async function approve(approvalData, signature, certificate, aesKey) {
-    try {
-        const wallet = await getWallet(approvalData.org);
-        const identity = await wallet.get(userId);
-        if (!approvalData || !signature || !certificate) {
-            return res.status(400).json({ error: 'approvalData, signature, and certificate are required' });
-        }
+async function approve(approvalDigest, payload, userId, signatureB64, aesKey, org) {
+  try {
+    console.log(
+      "approvalDigest:", approvalDigest,
+      "userId:", userId,
+      "signatureB64:", signatureB64,
+      "aesKey:", aesKey,
+      "org:", org,
+      "payload:", payload
+    );
 
-
-
-        if (!identity) {
-            throw new Error(`User ${userId} not found in wallet. Please register first.`);
-        }
-
-        const valid = await verifySignature(certificate, approvalData, signature);
-
-
-        if (!valid) return res.status(403).json({ error: 'Invalid signature' });
-
-        const decryptedCert = encryptWallet.decryptWallet(identity.credentials.certificate, aesKey);
-
-        const tempWallet = await Wallets.newInMemoryWallet();
-        await tempWallet.put(userId, {
-            credentials: {
-                certificate: certificate,
-                privateKey: identity.credentials.privateKey
-            },
-            mspId: identity.mspId,
-            type: identity.type
-        });
-
-        const validity = await confirmValidity(tempWallet, org, userId, 'AuthenticateUser');
-        const roleMatch = validity.message.match(/role=(\w+)/);
-        const role = roleMatch ? roleMatch[1] : 'unknown';
-
-        return {code:200, role:role}
-    } catch (error) {
-        throw Error(error)
+    if (!approvalDigest || !signatureB64 || !aesKey) {
+      return { code: 402, message: "approvalDigest, signature, and aesKey are required" };
     }
+
+    const wallet = await getWallet(org);
+    const identity = await wallet.get(userId);
+
+    if (!identity) {
+      throw new Error(`User ${userId} not found in wallet. Please register first.`);
+    }
+
+    // Decrypt certificate
+    const decryptedCert = encryptWallet.decryptWallet(identity.credentials.certificate, aesKey);
+
+    console.log("Signature verification failed!", decryptedCert);
+    
+    const valid = verifySignature(decryptedCert, approvalDigest, signatureB64);
+
+    if (!valid) {
+      console.log("Signature verification failed!");
+      return { code: 402, message: "Invalid signature" };
+    }
+
+    console.log("Signature verified successfully.");
+
+
+    const tempWallet = await Wallets.newInMemoryWallet();
+    await tempWallet.put(userId, {
+      credentials: {
+        certificate: decryptedCert,
+        privateKey: identity.credentials.privateKey,
+      },
+      mspId: identity.mspId,
+      type: identity.type,
+    });
+
+    
+    const validity = await confirmValidity(tempWallet, org, userId, "AuthenticateUser");
+    console.log("Validity check result:", validity);
+
+    const roleMatch = validity.message?.match(/role=(\w+)/);
+    const role = roleMatch ? roleMatch[1] : "unknown";
+
+    return { code: 200, message: "verified", role: role };
+  } catch (error) {
+    console.error("Error in approve:", error);
+    throw new Error(error);
+  }
 }
 
 
