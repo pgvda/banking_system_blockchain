@@ -32,7 +32,7 @@ async function confirmValidity(wallet, orgShortName, userId, chaincodeFunction) 
         discovery: {enabled:true, asLocalhost:true}
     })
 
-    const network = await gateway.getNetwork('mychannel');
+    const network = await gateway.getNetwork('mifinance');
     const contract = network.getContract('basic');
 
     const result = await contract.evaluateTransaction(chaincodeFunction);
