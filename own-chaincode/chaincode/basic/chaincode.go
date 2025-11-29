@@ -8,35 +8,38 @@ import (
 	"github.com/hyperledger/fabric-contract-api-go/contractapi"
 )
 
-// SmartContract provides functions for managing users
+// ======================== Contract ========================
+
 type SmartContract struct {
 	contractapi.Contract
 }
 
-// User defines the structure for a user in the banking system
+// ======================== Structs ==========================
+
+// User object stored in ledger
 type User struct {
-	Username string `json:"username"`
-	Role string `json:"role"`         // SuperAdmin | Admin | Manager | User
-	Email string `json:"email"`
-	NationalID string `json:"nationalId"`
-	BankBranch string `json:"bankBranch"`
-	IsActive bool `json:"isActive"`
-	RegisteredAt string `json:"registeredAt"` // ISO date string
-	CreatedBy string `json:"createdBy"`    // CN or userId who created this user
-	DataHash string `"json:"dataHash""`
+	ID           string `json:"id"`
+	Username     string `json:"username"`
+	Role         string `json:"role"`
+	Email        string `json:"email"`
+	NationalID   string `json:"nationalId"`
+	BankBranch   string `json:"bankBranch"`
+	IsActive     bool   `json:"isActive"`
+	RegisteredAt string `json:"registeredAt"`
+	CreatedBy    string `json:"createdBy"`
+	DataHash     string `json:"dataHash"`
 }
 
 type TransactionHistory struct {
-	DepositUser string `json:"depositUser"`
-	Amount string `json:"amount"`
-	Date stirng `json:"date"`
-	Time string `json:"time"`
-	HistoryHash string `json:"historyHash"`
+	DepositUser  string `json:"depositUser"`
+	Amount       string `json:"amount"`
+	Date         string `json:"date"`
+	Time         string `json:"time"`
+	HistoryHash  string `json:"historyHash"`
 }
 
-// ======= Helper functions for caller identity & attributes =======
+// ======================== Identity Helpers ========================
 
-// getClientRole returns the value of the 'role' attribute in the caller's certificate (if present)
 func getClientRole(ctx contractapi.TransactionContextInterface) (string, bool, error) {
 	cid := ctx.GetClientIdentity()
 	role, found, err := cid.GetAttributeValue("role")
@@ -46,17 +49,15 @@ func getClientRole(ctx contractapi.TransactionContextInterface) (string, bool, e
 	return role, found, nil
 }
 
-// getClientMSP returns the MSP ID of the caller
 func getClientMSP(ctx contractapi.TransactionContextInterface) (string, error) {
 	cid := ctx.GetClientIdentity()
 	mspID, err := cid.GetMSPID()
 	if err != nil {
-		return "", fmt.Errorf("failed to get caller MSPID: %v", err)
+		return "", fmt.Errorf("failed to get MSP ID: %v", err)
 	}
 	return mspID, nil
 }
 
-// requireRole asserts that the caller has one of the allowed roles
 func requireRole(ctx contractapi.TransactionContextInterface, allowed ...string) error {
 	role, found, err := getClientRole(ctx)
 	if err != nil {
@@ -65,55 +66,47 @@ func requireRole(ctx contractapi.TransactionContextInterface, allowed ...string)
 	if !found {
 		return fmt.Errorf("caller has no 'role' attribute in certificate")
 	}
-	for _, a := range allowed {
-		if role == a {
+	for _, v := range allowed {
+		if role == v {
 			return nil
 		}
 	}
 	return fmt.Errorf("access denied: caller role '%s' not in allowed set %v", role, allowed)
 }
 
-// getCallerCN returns the Common Name (CN) from the caller's certificate
 func getCallerCN(ctx contractapi.TransactionContextInterface) (string, error) {
 	cid := ctx.GetClientIdentity()
 	cert, err := cid.GetX509Certificate()
 	if err == nil && cert != nil {
 		return cert.Subject.CommonName, nil
 	}
-	// Fallback to client identity string if certificate object not available
 	subject, err := cid.GetID()
 	if err != nil {
 		return "", fmt.Errorf("failed to get caller identity: %v", err)
 	}
-	cn := extractCN(subject)
-	if cn == "" {
-		return subject, nil
-	}
-	return cn, nil
+	return extractCN(subject), nil
 }
 
-// extractCN parses CN from a subject string that may look like "x509::/CN=alice::..."
 func extractCN(subject string) string {
 	start := strings.Index(subject, "CN=")
 	if start == -1 {
-		return ""
+		return subject
 	}
-	// find end marker '::' after CN=
-	remaining := subject[start+3:]
-	end := strings.Index(remaining, "::")
+	s := subject[start+3:]
+	end := strings.Index(s, "::")
 	if end == -1 {
-		return remaining
+		return s
 	}
-	return remaining[:end]
+	return s[:end]
 }
 
-// ======= Chaincode functions =======
+// ======================== Chaincode Methods ========================
 
-// InitialUser adds some default users to the ledger (for testing/demos)
+// Add initial users
 func (s *SmartContract) InitialUser(ctx contractapi.TransactionContextInterface) error {
-	// Only SuperAdmin or Admin may call this in production—here we permit Admin/SuperAdmin
+
 	if err := requireRole(ctx, "SuperAdmin", "Admin"); err != nil {
-		return fmt.Errorf("permission denied for InitialUser: %v", err)
+		return fmt.Errorf("permission denied: %v", err)
 	}
 
 	users := []User{
@@ -140,74 +133,70 @@ func (s *SmartContract) InitialUser(ctx contractapi.TransactionContextInterface)
 	}
 
 	cn, _ := getCallerCN(ctx)
-	for _, user := range users {
-		user.CreatedBy = cn
-		userJSON, err := json.Marshal(user)
-		if err != nil {
+
+	for _, u := range users {
+		u.CreatedBy = cn
+		data, _ := json.Marshal(u)
+		if err := ctx.GetStub().PutState(u.ID, data); err != nil {
 			return err
 		}
-		if err := ctx.GetStub().PutState(user.ID, userJSON); err != nil {
-			return fmt.Errorf("failed to store user %s: %v", user.ID, err)
-		}
 	}
+
 	return nil
 }
 
-// UserExists checks if a user exists in the ledger
+// Check user existence
 func (s *SmartContract) UserExists(ctx contractapi.TransactionContextInterface, id string) (bool, error) {
 	if id == "" {
-		return false, fmt.Errorf("id argument is required")
+		return false, fmt.Errorf("id is required")
 	}
-	userJSON, err := ctx.GetStub().GetState(id)
+	data, err := ctx.GetStub().GetState(id)
 	if err != nil {
-		return false, fmt.Errorf("failed to read user: %v", err)
+		return false, err
 	}
-	return userJSON != nil, nil
+	return data != nil, nil
 }
 
-// CreateUser creates a new user with RBAC enforcement
-func (s *SmartContract) CreateUser(ctx contractapi.TransactionContextInterface, id string, username string, role string, email string, nationalID string, bankBranch string, registeredAt string) error {
-	// Validate inputs
+// Create user with RBAC
+func (s *SmartContract) CreateUser(
+	ctx contractapi.TransactionContextInterface,
+	id string, username string, role string,
+	email string, nationalID string, bankBranch string, registeredAt string,
+) error {
+
 	if id == "" || username == "" || role == "" {
-		return fmt.Errorf("id, username and role are required")
+		return fmt.Errorf("id, username and role required")
 	}
 
-	// Get caller role
 	callerRole, found, err := getClientRole(ctx)
 	if err != nil {
 		return err
 	}
 	if !found {
-		return fmt.Errorf("caller has no role attribute in certificate")
+		return fmt.Errorf("no role attribute in certificate")
 	}
 
-	// Enforce role creation policy:
-	// - Only SuperAdmin can create Admin
-	// - Admin or SuperAdmin can create Manager and User
+	// RBAC Rules
 	switch role {
 	case "Admin":
 		if callerRole != "SuperAdmin" {
-			return fmt.Errorf("only SuperAdmin can create Admin accounts")
+			return fmt.Errorf("only SuperAdmin can create Admin")
 		}
 	case "Manager", "User":
 		if callerRole != "SuperAdmin" && callerRole != "Admin" {
-			return fmt.Errorf("only SuperAdmin or Admin can create Manager/User accounts")
+			return fmt.Errorf("only Admin/SuperAdmin can create Manager/User")
 		}
 	default:
-		return fmt.Errorf("invalid role: %s. Allowed roles: SuperAdmin, Admin, Manager, User", role)
+		return fmt.Errorf("invalid role: %s", role)
 	}
 
-	// Check existence
-	exists, err := s.UserExists(ctx, id)
-	if err != nil {
-		return err
-	}
+	exists, _ := s.UserExists(ctx, id)
 	if exists {
-		return fmt.Errorf("the user %s already exists", id)
+		return fmt.Errorf("user %s already exists", id)
 	}
 
-	// Build user object
 	cn, _ := getCallerCN(ctx)
+
 	user := User{
 		ID:           id,
 		Username:     username,
@@ -220,166 +209,146 @@ func (s *SmartContract) CreateUser(ctx contractapi.TransactionContextInterface, 
 		CreatedBy:    cn,
 	}
 
-	userJSON, err := json.Marshal(user)
-	if err != nil {
-		return err
-	}
-	return ctx.GetStub().PutState(id, userJSON)
+	data, _ := json.Marshal(user)
+	return ctx.GetStub().PutState(id, data)
 }
 
-// GetUser fetches a user by ID
+// Fetch user
 func (s *SmartContract) GetUser(ctx contractapi.TransactionContextInterface, id string) (*User, error) {
 	if id == "" {
-		return nil, fmt.Errorf("id argument is required")
+		return nil, fmt.Errorf("id required")
 	}
-	userJSON, err := ctx.GetStub().GetState(id)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read user %s: %v", id, err)
-	}
-	if userJSON == nil {
-		return nil, fmt.Errorf("user %s does not exist", id)
+	data, err := ctx.GetStub().GetState(id)
+	if err != nil || data == nil {
+		return nil, fmt.Errorf("user %s not found", id)
 	}
 
-	var user User
-	if err := json.Unmarshal(userJSON, &user); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal user %s: %v", id, err)
-	}
-	return &user, nil
+	var u User
+	json.Unmarshal(data, &u)
+	return &u, nil
 }
 
-// GetAllUsers returns all users stored in the ledger
+// Get all users
 func (s *SmartContract) GetAllUsers(ctx contractapi.TransactionContextInterface) ([]*User, error) {
-	// Only Admin or SuperAdmin can list all users (sensible default)
+
 	if err := requireRole(ctx, "SuperAdmin", "Admin"); err != nil {
-		return nil, fmt.Errorf("permission denied: %v", err)
+		return nil, err
 	}
 
-	resultsIterator, err := ctx.GetStub().GetStateByRange("", "")
+	iter, err := ctx.GetStub().GetStateByRange("", "")
 	if err != nil {
-		return nil, fmt.Errorf("failed to get state by range: %v", err)
+		return nil, err
 	}
-	defer resultsIterator.Close()
+	defer iter.Close()
 
-	var users []*User
-	for resultsIterator.HasNext() {
-		queryResponse, err := resultsIterator.Next()
-		if err != nil {
-			return nil, err
+	var list []*User
+
+	for iter.HasNext() {
+		res, _ := iter.Next()
+		var u User
+		if json.Unmarshal(res.Value, &u) == nil {
+			list = append(list, &u)
 		}
-		var user User
-		if err := json.Unmarshal(queryResponse.Value, &user); err != nil {
-			// skip malformed entries, but log (chaincode cannot log to stdout reliably in all setups)
-			continue
-		}
-		users = append(users, &user)
 	}
-	return users, nil
+
+	return list, nil
 }
 
-// UpdateUser updates editable fields of a user (only Admin or SuperAdmin)
-func (s *SmartContract) UpdateUser(ctx contractapi.TransactionContextInterface, id string, username string, email string, bankBranch string) error {
-	if id == "" {
-		return fmt.Errorf("id argument is required")
-	}
-	// Only Admin or SuperAdmin
+// Update user
+func (s *SmartContract) UpdateUser(ctx contractapi.TransactionContextInterface, id, username, email, bankBranch string) error {
+
 	if err := requireRole(ctx, "SuperAdmin", "Admin"); err != nil {
-		return fmt.Errorf("permission denied: %v", err)
+		return err
 	}
 
-	user, err := s.GetUser(ctx, id)
+	u, err := s.GetUser(ctx, id)
 	if err != nil {
 		return err
 	}
 
-	// Update allowed fields
 	if username != "" {
-		user.Username = username
+		u.Username = username
 	}
 	if email != "" {
-		user.Email = email
+		u.Email = email
 	}
 	if bankBranch != "" {
-		user.BankBranch = bankBranch
+		u.BankBranch = bankBranch
 	}
 
-	userJSON, err := json.Marshal(user)
-	if err != nil {
-		return err
-	}
-	return ctx.GetStub().PutState(id, userJSON)
+	data, _ := json.Marshal(u)
+	return ctx.GetStub().PutState(id, data)
 }
 
-// DeactivateUser marks a user as inactive (and should be revoked by CA separately)
+// Deactivate user
 func (s *SmartContract) DeactivateUser(ctx contractapi.TransactionContextInterface, id string) error {
-	if id == "" {
-		return fmt.Errorf("id argument is required")
-	}
-	// Only Admin or SuperAdmin may deactivate
+
 	if err := requireRole(ctx, "SuperAdmin", "Admin"); err != nil {
-		return fmt.Errorf("permission denied: %v", err)
+		return err
 	}
 
-	user, err := s.GetUser(ctx, id)
+	u, err := s.GetUser(ctx, id)
 	if err != nil {
 		return err
 	}
 
-	if !user.IsActive {
-		return fmt.Errorf("user %s is already inactive", id)
-	}
-
-	user.IsActive = false
-	userJSON, err := json.Marshal(user)
-	if err != nil {
-		return err
-	}
-	return ctx.GetStub().PutState(id, userJSON)
+	u.IsActive = false
+	data, _ := json.Marshal(u)
+	return ctx.GetStub().PutState(id, data)
 }
 
-// AuthenticateUser returns info about the caller (CN, role, MSP) — useful for debugging and client checks
+// Caller identity info
 func (s *SmartContract) AuthenticateUser(ctx contractapi.TransactionContextInterface) (string, error) {
-	cn, err := getCallerCN(ctx)
-	if err != nil {
-		return "", fmt.Errorf("failed to obtain caller CN: %v", err)
+	cn, _ := getCallerCN(ctx)
+	role, found, _ := getClientRole(ctx)
+	msp, _ := getClientMSP(ctx)
+
+	if !found {
+		role = "none"
 	}
-	role, found, err := getClientRole(ctx)
-	if err != nil {
-		return "", fmt.Errorf("failed to obtain role attribute: %v", err)
-	}
-	msp, err := getClientMSP(ctx)
-	if err != nil {
-		return "", fmt.Errorf("failed to obtain MSP: %v", err)
-	}
-	roleStr := "none"
-	if found {
-		roleStr = role
-	}
-	return fmt.Sprintf("CN=%s, MSP=%s, role=%s", cn, msp, roleStr), nil
+
+	return fmt.Sprintf("CN=%s, MSP=%s, role=%s", cn, msp, role), nil
 }
 
-func (s*SmartContract) CreateTransactionHistory(ctx contractapi.TransactionContextInterface, depositUser string, amount string, date string, time string, historyHash string) error {
+// Create Transaction History
+func (s *SmartContract) CreateTransactionHistory(
+	ctx contractapi.TransactionContextInterface,
+	depositUser string, amount string, date string, time string, historyHash string,
+) error {
+
 	if depositUser == "" || amount == "" || historyHash == "" {
-		return fmt.Errorf("deposit, amount, historyHash required")
+		return fmt.Errorf("required fields missing")
 	}
 
-	callerRole, found, err := getClientRole(ctx)
+	_, found, err := getClientRole(ctx)
 	if err != nil {
 		return err
 	}
 	if !found {
-		return fmt.Errorf("caller has no role attribute in certificate")
+		return fmt.Errorf("caller has no role attribute")
 	}
+
+	record := TransactionHistory{
+		DepositUser: depositUser,
+		Amount:      amount,
+		Date:        date,
+		Time:        time,
+		HistoryHash: historyHash,
+	}
+
+	data, _ := json.Marshal(record)
+	return ctx.GetStub().PutState(historyHash, data)
 }
 
-// ======= Main =======
+// ======================== Main ========================
+
 func main() {
-	chaincode, err := contractapi.NewChaincode(new(SmartContract))
+	cc, err := contractapi.NewChaincode(new(SmartContract))
 	if err != nil {
-		fmt.Printf("Error creating user chaincode: %v\n", err)
+		fmt.Println("Error creating chaincode:", err)
 		return
 	}
-
-	if err := chaincode.Start(); err != nil {
-		fmt.Printf("Error starting user chaincode: %v\n", err)
+	if err := cc.Start(); err != nil {
+		fmt.Println("Error starting chaincode:", err)
 	}
 }
