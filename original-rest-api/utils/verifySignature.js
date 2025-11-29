@@ -1,11 +1,33 @@
-exports.verifySignature = (certificatePEM, messageJSON, signatureB64) => {
-    const verifier = crypto.createVerify('sha256');
-    verifier.update(JSON.stringify(messageJSON));
-    verifier.end();
-    const sigBuf = Buffer.from(signatureB64, 'base64');
+const crypto = require('crypto');
 
-    // Extract public key from certificate
-    const cert = crypto.X509Certificate ? new crypto.X509Certificate(certificatePEM) : null;
-    const publicKey = cert ? cert.publicKey : certificatePEM; // fallback
-    return verifier.verify(publicKey, sigBuf);
+function verifySignature(certPEM, payload, signatureDERBase64) {
+  console.log('signaueredfvdv', signatureDERBase64)
+  const cert = new crypto.X509Certificate(certPEM);
+  const publicKey = cert.publicKey;
+
+  const digestBytes = Buffer.from(payload, 'base64');
+
+
+  const signatureDER = Buffer.from(signatureDERBase64, 'base64');
+
+  console.log('payloadBytes', digestBytes)
+  console.log('payloadBytes', digestBytes.byteLength)
+
+  const valid = crypto.verify(
+    null,
+    digestBytes,
+    {
+      key: publicKey,
+      format: 'pem',
+      type: 'spki'
+    },
+    signatureDER
+  );
+
+  return valid;
 }
+
+
+
+
+module.exports = { verifySignature };
