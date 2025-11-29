@@ -58,11 +58,11 @@ async function getWalletController(req, res) {
 }
 async function aprroveController(req, res) {
     try {
-        const {approvalData, signature, certificate, aesKey} = req.body;
-        console.log('get org')
-        const message = await approve(approvalData, signature, certificate, aesKey);
+        const {approvalData, data, userId, signature,aesKey, org} = req.body;
+        console.log('get org', data)
+        const {code,message, role} = await approve(approvalData, data, userId, signature, aesKey, org);
         console.log(message)
-        res.json({ message });
+        res.json({'code':code, 'message': message, 'role':role });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
